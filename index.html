@@ -98,7 +98,7 @@
   #stats .summary b { font-size: 20px; font-variant-numeric: tabular-nums; }
   #stats .summary span { font-size: 12px; color: var(--muted); }
   table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
-  td, th { padding: 4px 6px; text-align: left; font-size: 13px; }
+  td, th { padding: 4px 6px; text-align: left; font-size: 13px; white-space: nowrap; }
   th { color: var(--muted); font-weight: 500; font-size: 12px; }
   td.bar { width: 50%; }
   td.bar div { height: 6px; background: var(--accent); border-radius: 3px; }
@@ -141,6 +141,14 @@
     <label for="micSel">Microphone</label>
     <select id="micSel"><option value="">Default</option></select>
     <span class="note-sm" id="micNote"></span>
+  </div>
+  <div class="row">
+    <label>Order</label>
+    <div class="seg" data-key="order">
+      <button data-v="even">Even</button>
+      <button data-v="slow">Favor slow notes</button>
+    </div>
+    <span class="note-sm" id="orderNote"></span>
   </div>
   <div class="row" id="rowSens">
     <label>Mic sensitivity</label>
@@ -191,7 +199,7 @@
   };
 
   const settings = Object.assign(
-    { notes: 'naturals', mode: 'mic', secIdx: SECONDS.indexOf(3), sens: 'med', micId: '' },
+    { notes: 'naturals', mode: 'mic', secIdx: SECONDS.indexOf(3), sens: 'med', micId: '', order: 'slow' },
     store.get('fnd.settings', {})
   );
   if (!(settings.secIdx >= 0 && settings.secIdx < SECONDS.length)) settings.secIdx = 4;
@@ -216,22 +224,63 @@
     return settings.notes === 'all' ? NATURALS.concat(ACCIDENTALS) : NATURALS;
   }
 
-  // Shuffle bag: every note in the pool comes up once, in random order, before
-  // any note repeats. Still never the same pitch twice in a row (C♯ then D♭).
-  let bag = [], bagFor = null;
+  // Shuffle bag: each round deals every note in the pool at least once, in random
+  // order, so nothing gets neglected. With "Favor slow notes", notes you've recently
+  // been slow on get extra copies in the round (see copiesFor). Never the same pitch
+  // twice in a row (C♯ then D♭), and if possible not within 2 notes either, so
+  // repeats of a slow note are spread out rather than clustered.
+  const EMA_ALPHA = 0.3;        // weight of the newest time in a note's recent average
+  const MIN_SAMPLES = 3;        // don't judge a note on fewer plays than this
+
+  function recentMs(name) {
+    const s = stats.by[name];
+    if (!s || s.n < MIN_SAMPLES) return null;
+    return s.ema != null ? s.ema : s.total / s.n;
+  }
+
+  // 1 copy normally; 2 if ≥25% slower than your typical note; 3 if ≥50% slower.
+  function copiesFor(p) {
+    const out = new Map(p.map(n => [n[0], 1]));
+    if (settings.order !== 'slow') return out;
+    const times = p.map(n => recentMs(n[0])).filter(t => t != null).sort((a, b) => a - b);
+    if (times.length < 3) return out;
+    const typical = times[Math.floor(times.length / 2)];   // median, so one terrible note doesn't skew it
+    // Extras go to the slowest notes first, capped at a third of the pool per round
+    // so a round stays mostly mixed practice rather than drilling one note.
+    let budget = Math.ceil(p.length / 3);
+    const ranked = p.map(n => [n[0], recentMs(n[0])]).filter(x => x[1] != null).sort((a, b) => b[1] - a[1]);
+    for (const [name, t] of ranked) {
+      const want = Math.min(2, Math.max(0, Math.floor((t / typical - 1) / 0.25 + 1e-9)));
+      const extra = Math.min(want, budget);
+      budget -= extra;
+      out.set(name, 1 + extra);
+    }
+    return out;
+  }
+
+  function newRound(p) {
+    const c = copiesFor(p), round = [];
+    for (const n of p) for (let i = 0; i < c.get(n[0]); i++) round.push(n);
+    return round;
+  }
+
+  let bag = [], bagFor = null, recent = [];
   function pickNext() {
     const p = pool();
-    if (bagFor !== p) { bag = []; bagFor = p; }
-    if (!bag.length) bag = p.slice();
-    let ok = current ? bag.filter(n => n[1] !== current[1]) : bag;
+    const key = p.length + settings.order;
+    if (bagFor !== key) { bag = []; bagFor = key; }
+    if (!bag.length) bag = newRound(p);
+    const last = current ? current[1] : null;
+    let ok = bag.filter(n => !recent.includes(n[1]));
+    if (!ok.length) ok = bag.filter(n => n[1] !== last);
     if (!ok.length) {
-      // Only the current pitch's other spelling is left: start the next round now
-      // and leave the leftover in it.
-      bag = bag.concat(p);
-      ok = bag.filter(n => n[1] !== current[1]);
+      // Only the current pitch is left: start the next round now and keep the leftover in it.
+      bag = bag.concat(newRound(p));
+      ok = bag.filter(n => n[1] !== last);
     }
     const pick = ok[Math.floor(Math.random() * ok.length)];
     bag.splice(bag.indexOf(pick), 1);
+    recent = [pick[1]].concat(recent).slice(0, 2);
     return pick;
   }
 
@@ -430,6 +479,8 @@
     const ms = now - shownAt;
     const name = current[0];
     const s = stats.by[name] || (stats.by[name] = { n: 0, total: 0 });
+    if (s.ema == null) s.ema = s.n ? s.total / s.n : ms;
+    s.ema += EMA_ALPHA * (ms - s.ema);
     s.n++; s.total += ms;
     stats.last = ms;
     store.set('fnd.stats', stats);
@@ -510,6 +561,9 @@
     $('rowSeconds').hidden = settings.mode !== 'timer';
     $('rowSens').hidden = settings.mode !== 'mic';
     $('rowMic').hidden = settings.mode !== 'mic';
+    $('orderNote').textContent = settings.order === 'slow'
+      ? 'Notes you\'ve recently been slow on come up 2–3× per round. Uses “I play it” times.'
+      : 'Every note once per round.';
   }
   function saveSettings(restart) {
     store.set('fnd.settings', settings);
@@ -523,6 +577,7 @@
       if (settings[k] === b.dataset.v) return;
       settings[k] = b.dataset.v;
       saveSettings(k === 'mode' || k === 'notes');
+      if (k === 'order' || k === 'notes') renderStats();
     });
   });
   $('micSel').addEventListener('change', e => {
@@ -556,8 +611,13 @@
     if (!rows.length) { list.innerHTML = '<p class="empty">No notes played yet. Stats are recorded in “I play it” mode.</p>'; return; }
     rows.sort((a, b) => b.avg - a.avg);
     const max = rows[0].avg;
-    list.innerHTML = '<table><thead><tr><th>Note</th><th>Avg</th><th>n</th><th></th></tr></thead><tbody>' +
-      rows.map(r => `<tr><td><b>${r.name}</b></td><td>${fmt(r.avg)}</td><td>${r.n}</td>` +
+    const copies = copiesFor(pool());
+    const showX = settings.order === 'slow';
+    list.innerHTML = '<table><thead><tr><th>Note</th><th>Avg</th><th>Recent</th><th>n</th>' +
+      (showX ? '<th title="Times per round">×</th>' : '') + '<th></th></tr></thead><tbody>' +
+      rows.map(r => `<tr><td><b>${r.name}</b></td><td>${fmt(r.avg)}</td>` +
+        `<td>${fmt(recentMs(r.name))}</td><td>${r.n}</td>` +
+        (showX ? `<td>${copies.has(r.name) && copies.get(r.name) > 1 ? '×' + copies.get(r.name) : ''}</td>` : '') +
         `<td class="bar"><div style="width:${(r.avg / max * 100).toFixed(1)}%"></div></td></tr>`).join('') +
       '</tbody></table>';
   }
