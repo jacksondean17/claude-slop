@@ -56,6 +56,12 @@
   .seg { display: flex; flex-wrap: wrap; gap: 6px; }
   .seg button { padding: 6px 10px; }
   .seg button.on { background: var(--accent); color: #1a1205; border-color: var(--accent); font-weight: 600; }
+  select {
+    font: inherit; color: var(--text); background: var(--bg);
+    border: 1px solid var(--line); border-radius: 8px;
+    padding: 7px 10px; width: 100%; max-width: 420px;
+  }
+  .note-sm { font-size: 12px; color: var(--muted); }
   .stepper { display: flex; align-items: center; gap: 10px; }
   .stepper output { min-width: 4.5em; text-align: center; font-variant-numeric: tabular-nums; font-weight: 600; }
 
@@ -131,6 +137,11 @@
       <button id="secUp" aria-label="More seconds">+</button>
     </div>
   </div>
+  <div class="row" id="rowMic">
+    <label for="micSel">Microphone</label>
+    <select id="micSel"><option value="">Default</option></select>
+    <span class="note-sm" id="micNote"></span>
+  </div>
   <div class="row" id="rowSens">
     <label>Mic sensitivity</label>
     <div class="seg" data-key="sens">
@@ -180,7 +191,7 @@
   };
 
   const settings = Object.assign(
-    { notes: 'naturals', mode: 'mic', secIdx: SECONDS.indexOf(3), sens: 'med' },
+    { notes: 'naturals', mode: 'mic', secIdx: SECONDS.indexOf(3), sens: 'med', micId: '' },
     store.get('fnd.settings', {})
   );
   if (!(settings.secIdx >= 0 && settings.secIdx < SECONDS.length)) settings.secIdx = 4;
@@ -289,12 +300,22 @@
     return { pc: ((r % 12) + 12) % 12, cents: Math.round((midi - r) * 100), octave: Math.floor(r / 12) - 1 };
   }
 
+  const RAW = { echoCancellation: false, noiseSuppression: false, autoGainControl: false };
+
   async function startMic() {
     if (stream) return true;
     try {
-      stream = await navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false }
-      });
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          audio: settings.micId ? { ...RAW, deviceId: { exact: settings.micId } } : RAW
+        });
+      } catch (e) {
+        // Saved mic unplugged or no longer valid: fall back to the default one.
+        if (!settings.micId || !['OverconstrainedError', 'NotFoundError', 'NotReadableError'].includes(e.name)) throw e;
+        settings.micId = '';
+        store.set('fnd.settings', settings);
+        stream = await navigator.mediaDevices.getUserMedia({ audio: RAW });
+      }
     } catch (e) {
       hintEl.textContent = window.isSecureContext
         ? 'Microphone blocked. Allow mic access and press Start again.'
@@ -308,8 +329,40 @@
     analyser.fftSize = N;
     src.connect(analyser);
     buf = new Float32Array(N);
+    refreshMics();
     return true;
   }
+
+  function activeMicLabel() {
+    const t = stream && stream.getAudioTracks()[0];
+    return t ? (t.label || 'microphone') : '';
+  }
+
+  async function refreshMics() {
+    const sel = $('micSel'), note = $('micNote');
+    if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) {
+      sel.disabled = true; note.textContent = 'This browser can\'t list microphones.'; return;
+    }
+    let mics = [];
+    try { mics = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'audioinput'); } catch {}
+    const labelled = mics.some(d => d.label);
+    sel.innerHTML = '';
+    const def = document.createElement('option');
+    def.value = ''; def.textContent = 'Default';
+    sel.appendChild(def);
+    mics.forEach((d, i) => {
+      if (!d.deviceId || d.deviceId === 'default' || d.deviceId === 'communications') return;
+      const o = document.createElement('option');
+      o.value = d.deviceId;
+      o.textContent = d.label || `Microphone ${i + 1}`;
+      sel.appendChild(o);
+    });
+    sel.value = [...sel.options].some(o => o.value === settings.micId) ? settings.micId : '';
+    const using = activeMicLabel();
+    note.textContent = using ? `Listening on: ${using}`
+      : labelled ? '' : 'Press Start once and allow the mic to see their names.';
+  }
+
 
   function stopMic() {
     cancelAnimationFrame(micRaf);
@@ -399,7 +452,7 @@
       hearEl.hidden = false;
       progressBar.style.width = '0';
       micRaf = requestAnimationFrame(micLoop);
-      hintEl.textContent = 'Play the note anywhere on the neck';
+      hintEl.textContent = `Play the note anywhere on the neck · mic: ${activeMicLabel()}`;
     } else {
       hearEl.hidden = true;
       timerRaf = requestAnimationFrame(timerLoop);
@@ -443,6 +496,7 @@
     $('secOut').textContent = SECONDS[settings.secIdx] + ' s';
     $('rowSeconds').hidden = settings.mode !== 'timer';
     $('rowSens').hidden = settings.mode !== 'mic';
+    $('rowMic').hidden = settings.mode !== 'mic';
   }
   function saveSettings(restart) {
     store.set('fnd.settings', settings);
@@ -458,6 +512,14 @@
       saveSettings(k === 'mode' || k === 'notes');
     });
   });
+  $('micSel').addEventListener('change', e => {
+    settings.micId = e.target.value;
+    store.set('fnd.settings', settings);
+    if (running && settings.mode === 'mic') { stop(); start(); }
+  });
+  if (navigator.mediaDevices && navigator.mediaDevices.addEventListener) {
+    navigator.mediaDevices.addEventListener('devicechange', refreshMics);
+  }
   $('secDown').addEventListener('click', () => { settings.secIdx = Math.max(0, settings.secIdx - 1); saveSettings(); });
   $('secUp').addEventListener('click', () => { settings.secIdx = Math.min(SECONDS.length - 1, settings.secIdx + 1); saveSettings(); });
 
@@ -495,6 +557,7 @@
 
   renderSettings();
   renderStats();
+  refreshMics();
 })();
 </script>
 </body>
