@@ -1,0 +1,501 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#111214">
+<title>Fretboard Note Drill</title>
+<style>
+  :root {
+    --bg: #111214;
+    --panel: #1b1d21;
+    --line: #2c2f35;
+    --text: #e9e6df;
+    --muted: #8d8f96;
+    --accent: #f5a524;
+    --accent-dim: #6b4a12;
+    --good: #3ddc84;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font: 15px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    display: flex;
+    flex-direction: column;
+    overflow-x: hidden;
+    -webkit-tap-highlight-color: transparent;
+    padding: env(safe-area-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left);
+  }
+  header {
+    display: flex; align-items: center; gap: 8px;
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--line);
+  }
+  header h1 { font-size: 15px; font-weight: 600; margin: 0; flex: 1; letter-spacing: .02em; }
+  header h1 span { color: var(--accent); }
+  button {
+    font: inherit; color: var(--text); background: var(--panel);
+    border: 1px solid var(--line); border-radius: 8px;
+    padding: 7px 12px; cursor: pointer;
+  }
+  button:hover { border-color: var(--muted); }
+  button.primary { background: var(--accent); color: #1a1205; border-color: var(--accent); font-weight: 600; }
+  button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+
+  #settings, #stats {
+    border-bottom: 1px solid var(--line);
+    padding: 12px 16px;
+    display: grid; gap: 12px;
+    background: var(--panel);
+  }
+  [hidden] { display: none !important; }
+  .row { display: grid; gap: 6px; }
+  .row > label { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
+  .seg { display: flex; flex-wrap: wrap; gap: 6px; }
+  .seg button { padding: 6px 10px; }
+  .seg button.on { background: var(--accent); color: #1a1205; border-color: var(--accent); font-weight: 600; }
+  .stepper { display: flex; align-items: center; gap: 10px; }
+  .stepper output { min-width: 4.5em; text-align: center; font-variant-numeric: tabular-nums; font-weight: 600; }
+
+  main {
+    flex: 1; min-height: 0;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    padding: 16px; position: relative;
+  }
+  #note {
+    font-size: clamp(7rem, 38vmin, 22rem);
+    font-weight: 700; line-height: 1;
+    user-select: none; cursor: pointer;
+    font-variant-numeric: tabular-nums;
+    transition: color .1s;
+    border: 0; background: none; padding: 0;
+  }
+  #note.idle { color: var(--muted); font-size: clamp(2rem, 9vmin, 4rem); font-weight: 500; }
+  #note.hit { color: var(--good); }
+  #hint { color: var(--muted); font-size: 13px; margin-top: 14px; text-align: center; min-height: 1.4em; }
+  #hear {
+    position: absolute; left: 16px; right: 16px; bottom: 18px;
+    display: flex; align-items: center; gap: 10px;
+    font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums;
+  }
+  #hearText { min-width: 9em; }
+  #levelWrap { flex: 1; height: 3px; background: var(--line); border-radius: 2px; overflow: hidden; position: relative; }
+  #level { height: 100%; width: 0; background: var(--muted); }
+  #gate { position: absolute; top: -2px; bottom: -2px; width: 1px; background: var(--accent); }
+  #progress { height: 4px; background: var(--line); }
+  #progressBar { height: 100%; width: 0; background: var(--accent); }
+
+  #stats .summary { display: flex; gap: 20px; flex-wrap: wrap; }
+  #stats .summary div { display: grid; }
+  #stats .summary b { font-size: 20px; font-variant-numeric: tabular-nums; }
+  #stats .summary span { font-size: 12px; color: var(--muted); }
+  table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+  td, th { padding: 4px 6px; text-align: left; font-size: 13px; }
+  th { color: var(--muted); font-weight: 500; font-size: 12px; }
+  td.bar { width: 50%; }
+  td.bar div { height: 6px; background: var(--accent); border-radius: 3px; }
+  #statList { max-height: 40vh; overflow-y: auto; }
+  .empty { color: var(--muted); font-size: 13px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Fretboard <span>Note Drill</span></h1>
+  <button id="btnSettings" aria-pressed="false">Settings</button>
+  <button id="btnStats" aria-pressed="false">Stats</button>
+  <button id="btnStart" class="primary">Start</button>
+</header>
+
+<section id="settings" hidden>
+  <div class="row">
+    <label>Notes</label>
+    <div class="seg" data-key="notes">
+      <button data-v="naturals">Naturals (7)</button>
+      <button data-v="all">+ Sharps &amp; flats (17)</button>
+    </div>
+  </div>
+  <div class="row">
+    <label>Next note when</label>
+    <div class="seg" data-key="mode">
+      <button data-v="mic">I play it</button>
+      <button data-v="timer">Timer</button>
+    </div>
+  </div>
+  <div class="row" id="rowSeconds">
+    <label>Seconds per note</label>
+    <div class="stepper">
+      <button id="secDown" aria-label="Fewer seconds">−</button>
+      <output id="secOut"></output>
+      <button id="secUp" aria-label="More seconds">+</button>
+    </div>
+  </div>
+  <div class="row" id="rowSens">
+    <label>Mic sensitivity</label>
+    <div class="seg" data-key="sens">
+      <button data-v="low">Low</button>
+      <button data-v="med">Med</button>
+      <button data-v="high">High</button>
+    </div>
+  </div>
+</section>
+
+<section id="stats" hidden>
+  <div class="summary">
+    <div><b id="sLast">–</b><span>Last</span></div>
+    <div><b id="sAvg">–</b><span>Average</span></div>
+    <div><b id="sCount">0</b><span>Notes</span></div>
+  </div>
+  <div id="statList"></div>
+  <div><button id="btnReset">Reset stats</button></div>
+</section>
+
+<main>
+  <button id="note" class="idle" aria-live="polite">Press Start</button>
+  <div id="hint">Space start/stop · → skip · tap note to skip</div>
+  <div id="hear" hidden>
+    <span id="hearText">—</span>
+    <div id="levelWrap"><div id="level"></div><div id="gate"></div></div>
+  </div>
+</main>
+<div id="progress"><div id="progressBar"></div></div>
+
+<script>
+(() => {
+  'use strict';
+
+  // ---------- Notes ----------
+  const NATURALS = [['C',0],['D',2],['E',4],['F',5],['G',7],['A',9],['B',11]];
+  const ACCIDENTALS = [['C♯',1],['D♭',1],['D♯',3],['E♭',3],['F♯',6],['G♭',6],['G♯',8],['A♭',8],['A♯',10],['B♭',10]];
+  const PC_NAME = ['C','C♯/D♭','D','D♯/E♭','E','F','F♯/G♭','G','G♯/A♭','A','A♯/B♭','B'];
+
+  const SECONDS = [1,1.5,2,2.5,3,4,5,6,8,10,12,15,20,30,45,60];
+  const SENS_RMS = { low: 0.03, med: 0.012, high: 0.005 };
+
+  // ---------- Storage (best effort) ----------
+  const store = {
+    get(k, d) { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch { return d; } },
+    set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} }
+  };
+
+  const settings = Object.assign(
+    { notes: 'naturals', mode: 'mic', secIdx: SECONDS.indexOf(3), sens: 'med' },
+    store.get('fnd.settings', {})
+  );
+  if (!(settings.secIdx >= 0 && settings.secIdx < SECONDS.length)) settings.secIdx = 4;
+  // stats: { name: { n, total } }, plus last
+  let stats = store.get('fnd.stats', { by: {}, last: null });
+  if (!stats || typeof stats.by !== 'object') stats = { by: {}, last: null };
+
+  // ---------- DOM ----------
+  const $ = id => document.getElementById(id);
+  const noteEl = $('note'), hintEl = $('hint'), hearEl = $('hear'), hearText = $('hearText');
+  const levelEl = $('level'), gateEl = $('gate'), progressBar = $('progressBar');
+  const btnStart = $('btnStart');
+
+  // ---------- State ----------
+  let running = false;
+  let current = null;       // [name, pc]
+  let shownAt = 0;
+  let advancing = false;    // during green flash
+  let timerRaf = 0;
+
+  function pool() {
+    return settings.notes === 'all' ? NATURALS.concat(ACCIDENTALS) : NATURALS;
+  }
+
+  function pickNext() {
+    const p = pool();
+    const choices = current ? p.filter(n => n[1] !== current[1]) : p;
+    return choices[Math.floor(Math.random() * choices.length)];
+  }
+
+  function showNext() {
+    current = pickNext();
+    noteEl.textContent = current[0];
+    noteEl.className = '';
+    shownAt = performance.now();
+    advancing = false;
+    resetMatch();
+  }
+
+  // ---------- Timer mode ----------
+  function timerLoop() {
+    if (!running || settings.mode !== 'timer') return;
+    const dur = SECONDS[settings.secIdx] * 1000;
+    const t = performance.now() - shownAt;
+    if (t >= dur) { showNext(); }
+    const frac = Math.min(1, (performance.now() - shownAt) / dur);
+    progressBar.style.width = (100 - frac * 100) + '%';
+    timerRaf = requestAnimationFrame(timerLoop);
+  }
+
+  // ---------- Mic + pitch detection ----------
+  const N = 4096;
+  let audioCtx = null, analyser = null, stream = null, buf = null, micRaf = 0;
+  let matchStart = 0, lastMatch = 0;
+
+  function resetMatch() { matchStart = 0; lastMatch = 0; }
+
+  // McLeod Pitch Method (normalized square difference function)
+  function detectPitch(x, sr) {
+    const minTau = Math.floor(sr / 1400);
+    const maxTau = Math.min(Math.ceil(sr / 70), N - 1);
+    const nsdf = new Float32Array(maxTau + 2);
+    for (let tau = 0; tau <= maxTau + 1; tau++) {
+      let acf = 0, m = 0;
+      const lim = N - tau;
+      for (let j = 0; j < lim; j++) {
+        const a = x[j], b = x[j + tau];
+        acf += a * b;
+        m += a * a + b * b;
+      }
+      nsdf[tau] = m > 0 ? 2 * acf / m : 0;
+    }
+    // Key maxima: highest point between each positive-going zero crossing and the next negative-going one.
+    const peaks = [];
+    let tau = 1;
+    while (tau < maxTau && nsdf[tau] > 0) tau++;          // skip the initial lobe at tau≈0
+    while (tau < maxTau && nsdf[tau] <= 0) tau++;
+    while (tau < maxTau) {
+      let best = tau;
+      while (tau < maxTau && nsdf[tau] > 0) {
+        if (nsdf[tau] > nsdf[best]) best = tau;
+        tau++;
+      }
+      if (best >= minTau && best > 0 && best < maxTau) peaks.push(best);
+      while (tau < maxTau && nsdf[tau] <= 0) tau++;
+    }
+    if (!peaks.length) return null;
+    let maxVal = 0;
+    for (const p of peaks) if (nsdf[p] > maxVal) maxVal = nsdf[p];
+    const thresh = 0.9 * maxVal;
+    const p = peaks.find(p => nsdf[p] >= thresh);
+    // parabolic interpolation
+    const a = nsdf[p - 1], b = nsdf[p], c = nsdf[p + 1];
+    const denom = a - 2 * b + c;
+    const shift = denom !== 0 ? 0.5 * (a - c) / denom : 0;
+    const period = p + shift;
+    const clarity = b - 0.25 * (a - c) * shift;
+    const freq = sr / period;
+    if (freq < 70 || freq > 1400) return null;
+    return { freq, clarity };
+  }
+
+  function freqToPc(f) {
+    const midi = 69 + 12 * Math.log2(f / 440);
+    const r = Math.round(midi);
+    return { pc: ((r % 12) + 12) % 12, cents: Math.round((midi - r) * 100), octave: Math.floor(r / 12) - 1 };
+  }
+
+  async function startMic() {
+    if (stream) return true;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false }
+      });
+    } catch (e) {
+      hintEl.textContent = window.isSecureContext
+        ? 'Microphone blocked. Allow mic access and press Start again.'
+        : 'Mic needs https (or localhost). Open this page over https.';
+      return false;
+    }
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === 'suspended') await audioCtx.resume();
+    const src = audioCtx.createMediaStreamSource(stream);
+    analyser = audioCtx.createAnalyser();
+    analyser.fftSize = N;
+    src.connect(analyser);
+    buf = new Float32Array(N);
+    return true;
+  }
+
+  function stopMic() {
+    cancelAnimationFrame(micRaf);
+    if (stream) stream.getTracks().forEach(t => t.stop());
+    if (audioCtx) audioCtx.close().catch(() => {});
+    stream = audioCtx = analyser = buf = null;
+  }
+
+  function micLoop() {
+    if (!running || !analyser) return;
+    analyser.getFloatTimeDomainData(buf);
+    let sum = 0;
+    for (let i = 0; i < N; i++) sum += buf[i] * buf[i];
+    const rms = Math.sqrt(sum / N);
+    const gate = SENS_RMS[settings.sens];
+    // level bar on a log-ish scale: 0.001 → 0%, 0.3 → 100%
+    const toPct = v => Math.max(0, Math.min(100, (Math.log10(Math.max(v, 1e-4)) + 3) / 2.5 * 100));
+    levelEl.style.width = toPct(rms) + '%';
+    levelEl.style.background = rms >= gate ? 'var(--accent)' : 'var(--muted)';
+    gateEl.style.left = toPct(gate) + '%';
+
+    const now = performance.now();
+    let heard = null;
+    if (rms >= gate) {
+      const r = detectPitch(buf, audioCtx.sampleRate);
+      if (r && r.clarity > 0.8) {
+        heard = freqToPc(r.freq);
+        const c = heard.cents;
+        hearText.textContent = `${PC_NAME[heard.pc]}  ${r.freq.toFixed(1)} Hz  ${c >= 0 ? '+' : ''}${c}¢`;
+      } else {
+        hearText.textContent = '…';
+      }
+    } else {
+      hearText.textContent = '—';
+    }
+
+    if (!advancing && current && now - shownAt >= 150) {
+      if (heard && heard.pc === current[1]) {
+        if (!matchStart) matchStart = now;
+        lastMatch = now;
+        if (now - matchStart >= 120) onPlayed(now);
+      } else if (heard || now - lastMatch > 60) {
+        // a wrong note resets immediately; a brief unclear frame is tolerated
+        resetMatch();
+      }
+    }
+    micRaf = requestAnimationFrame(micLoop);
+  }
+
+  function onPlayed(now) {
+    advancing = true;
+    const ms = now - shownAt;
+    const name = current[0];
+    const s = stats.by[name] || (stats.by[name] = { n: 0, total: 0 });
+    s.n++; s.total += ms;
+    stats.last = ms;
+    store.set('fnd.stats', stats);
+    renderStats();
+    noteEl.classList.add('hit');
+    setTimeout(() => { if (running) showNext(); }, 250);
+  }
+
+  // ---------- Wake lock ----------
+  let wakeLock = null;
+  async function lockScreen() {
+    try { if ('wakeLock' in navigator) wakeLock = await navigator.wakeLock.request('screen'); } catch {}
+  }
+  function unlockScreen() { try { wakeLock && wakeLock.release(); } catch {} wakeLock = null; }
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && running) lockScreen();
+  });
+
+  // ---------- Start / stop ----------
+  async function start() {
+    if (running) return;
+    hintEl.textContent = '';
+    if (settings.mode === 'mic') {
+      const ok = await startMic();
+      if (!ok) return;
+    }
+    running = true;
+    btnStart.textContent = 'Stop';
+    current = null;
+    showNext();
+    lockScreen();
+    if (settings.mode === 'mic') {
+      hearEl.hidden = false;
+      progressBar.style.width = '0';
+      micRaf = requestAnimationFrame(micLoop);
+      hintEl.textContent = 'Play the note anywhere on the neck';
+    } else {
+      hearEl.hidden = true;
+      timerRaf = requestAnimationFrame(timerLoop);
+      hintEl.textContent = '';
+    }
+  }
+
+  function stop() {
+    running = false;
+    cancelAnimationFrame(timerRaf);
+    stopMic();
+    unlockScreen();
+    btnStart.textContent = 'Start';
+    noteEl.textContent = 'Press Start';
+    noteEl.className = 'idle';
+    hearEl.hidden = true;
+    progressBar.style.width = '0';
+    hintEl.textContent = 'Space start/stop · → skip · tap note to skip';
+    current = null;
+  }
+
+  function skip() {
+    if (!running || advancing) return;
+    showNext();
+  }
+
+  btnStart.addEventListener('click', () => running ? stop() : start());
+  noteEl.addEventListener('click', () => running ? skip() : start());
+  document.addEventListener('keydown', e => {
+    if (e.target.closest && e.target.closest('input, textarea')) return;
+    if (e.code === 'Space') { e.preventDefault(); running ? stop() : start(); }
+    else if (e.code === 'ArrowRight') { e.preventDefault(); skip(); }
+  });
+
+  // ---------- Settings UI ----------
+  function renderSettings() {
+    document.querySelectorAll('.seg').forEach(seg => {
+      const k = seg.dataset.key;
+      seg.querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.v === settings[k]));
+    });
+    $('secOut').textContent = SECONDS[settings.secIdx] + ' s';
+    $('rowSeconds').hidden = settings.mode !== 'timer';
+    $('rowSens').hidden = settings.mode !== 'mic';
+  }
+  function saveSettings(restart) {
+    store.set('fnd.settings', settings);
+    renderSettings();
+    if (restart && running) { stop(); start(); }
+  }
+  document.querySelectorAll('.seg').forEach(seg => {
+    seg.addEventListener('click', e => {
+      const b = e.target.closest('button'); if (!b) return;
+      const k = seg.dataset.key;
+      if (settings[k] === b.dataset.v) return;
+      settings[k] = b.dataset.v;
+      saveSettings(k === 'mode' || k === 'notes');
+    });
+  });
+  $('secDown').addEventListener('click', () => { settings.secIdx = Math.max(0, settings.secIdx - 1); saveSettings(); });
+  $('secUp').addEventListener('click', () => { settings.secIdx = Math.min(SECONDS.length - 1, settings.secIdx + 1); saveSettings(); });
+
+  function togglePanel(id, btn) {
+    const el = $(id); el.hidden = !el.hidden;
+    btn.setAttribute('aria-pressed', String(!el.hidden));
+  }
+  $('btnSettings').addEventListener('click', e => togglePanel('settings', e.currentTarget));
+  $('btnStats').addEventListener('click', e => togglePanel('stats', e.currentTarget));
+
+  // ---------- Stats UI ----------
+  const fmt = ms => ms == null ? '–' : (ms / 1000).toFixed(2) + ' s';
+  function renderStats() {
+    const rows = Object.entries(stats.by).map(([name, s]) => ({ name, n: s.n, avg: s.total / s.n }));
+    const n = rows.reduce((a, r) => a + r.n, 0);
+    const total = Object.values(stats.by).reduce((a, s) => a + s.total, 0);
+    $('sLast').textContent = fmt(stats.last);
+    $('sAvg').textContent = n ? fmt(total / n) : '–';
+    $('sCount').textContent = n;
+    const list = $('statList');
+    if (!rows.length) { list.innerHTML = '<p class="empty">No notes played yet. Stats are recorded in “I play it” mode.</p>'; return; }
+    rows.sort((a, b) => b.avg - a.avg);
+    const max = rows[0].avg;
+    list.innerHTML = '<table><thead><tr><th>Note</th><th>Avg</th><th>n</th><th></th></tr></thead><tbody>' +
+      rows.map(r => `<tr><td><b>${r.name}</b></td><td>${fmt(r.avg)}</td><td>${r.n}</td>` +
+        `<td class="bar"><div style="width:${(r.avg / max * 100).toFixed(1)}%"></div></td></tr>`).join('') +
+      '</tbody></table>';
+  }
+  $('btnReset').addEventListener('click', () => {
+    if (!confirm('Reset all stats?')) return;
+    stats = { by: {}, last: null };
+    store.set('fnd.stats', stats);
+    renderStats();
+  });
+
+  renderSettings();
+  renderStats();
+})();
+</script>
+</body>
+</html>
