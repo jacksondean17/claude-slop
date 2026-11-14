@@ -216,10 +216,23 @@
     return settings.notes === 'all' ? NATURALS.concat(ACCIDENTALS) : NATURALS;
   }
 
+  // Shuffle bag: every note in the pool comes up once, in random order, before
+  // any note repeats. Still never the same pitch twice in a row (C♯ then D♭).
+  let bag = [], bagFor = null;
   function pickNext() {
     const p = pool();
-    const choices = current ? p.filter(n => n[1] !== current[1]) : p;
-    return choices[Math.floor(Math.random() * choices.length)];
+    if (bagFor !== p) { bag = []; bagFor = p; }
+    if (!bag.length) bag = p.slice();
+    let ok = current ? bag.filter(n => n[1] !== current[1]) : bag;
+    if (!ok.length) {
+      // Only the current pitch's other spelling is left: start the next round now
+      // and leave the leftover in it.
+      bag = bag.concat(p);
+      ok = bag.filter(n => n[1] !== current[1]);
+    }
+    const pick = ok[Math.floor(Math.random() * ok.length)];
+    bag.splice(bag.indexOf(pick), 1);
+    return pick;
   }
 
   function showNext() {
